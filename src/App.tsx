@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Home, Settings, BarChart, List, User, Menu, X } from 'lucide-react';
+import { Plus, Home, Settings, BarChart, List, User, Menu, X, LogOut } from 'lucide-react';
+import LoginPage from './components/LoginPage';
 import LanguageSelector from './components/LanguageSelector';
 import ComplaintForm from './components/ComplaintForm';
 import ComplaintCard from './components/ComplaintCard';
@@ -8,6 +9,7 @@ import AdminDashboard from './components/AdminDashboard';
 import { User as UserType, Complaint } from './types';
 import { storage } from './utils/localStorage';
 import { LANGUAGES } from './utils/constants';
+import { getTranslation } from './utils/translations';
 
 function App() {
   const [currentLanguage, setCurrentLanguage] = useState('english');
@@ -18,23 +20,16 @@ function App() {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  // Mock user for demo
+  const t = (key: string) => getTranslation(currentLanguage, key);
+
   useEffect(() => {
     const storedUser = storage.getUser();
-    if (!storedUser) {
-      const mockUser: UserType = {
-        id: 'user-001',
-        phoneNumber: '+91 9876543210',
-        preferredLanguage: 'english',
-        village: 'Thanjavur Village',
-        registrationDate: new Date(),
-        verificationStatus: 'verified'
-      };
-      storage.setUser(mockUser);
-      setUser(mockUser);
-    } else {
+    if (storedUser) {
       setUser(storedUser);
+      setIsLoggedIn(true);
+      setCurrentLanguage(storedUser.preferredLanguage);
     }
 
     // Load complaints
@@ -45,6 +40,23 @@ function App() {
     const storedLanguage = storage.getLanguage();
     setCurrentLanguage(storedLanguage);
   }, []);
+
+  const handleLogin = (user: UserType) => {
+    setUser(user);
+    setIsLoggedIn(true);
+    storage.setUser(user);
+    setCurrentLanguage(user.preferredLanguage);
+    storage.setLanguage(user.preferredLanguage);
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setIsLoggedIn(false);
+    storage.removeUser();
+    setComplaints([]);
+    setActiveTab('home');
+    setSelectedComplaint(null);
+  };
 
   const handleLanguageChange = (language: string) => {
     setCurrentLanguage(language);
@@ -98,7 +110,7 @@ function App() {
       setActiveTab('track');
       
       // Show success message
-      alert('Complaint submitted successfully! You will receive updates on its progress.');
+      alert(t('complaintSubmitted'));
     } catch (error) {
       console.error('Failed to submit complaint:', error);
       alert('Failed to submit complaint. Please try again.');
@@ -133,8 +145,8 @@ function App() {
         return (
           <div className="max-w-4xl mx-auto">
             <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-2">My Complaints</h2>
-              <p className="text-gray-600">Track the status of your submitted complaints</p>
+              <h2 className="text-xl font-bold text-gray-800 mb-2">{t('myComplaints') || 'My Complaints'}</h2>
+              <p className="text-gray-600">{t('trackStatus') || 'Track the status of your submitted complaints'}</p>
             </div>
             
             {complaints.length > 0 ? (
@@ -153,12 +165,12 @@ function App() {
             ) : (
               <div className="bg-white rounded-lg shadow-md p-12 text-center">
                 <List size={48} className="mx-auto text-gray-400 mb-4" />
-                <p className="text-gray-600 mb-4">No complaints filed yet</p>
+                <p className="text-gray-600 mb-4">{t('noComplaints')}</p>
                 <button
                   onClick={() => setActiveTab('file')}
                   className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
                 >
-                  File Your First Complaint
+                  {t('fileFirstComplaint')}
                 </button>
               </div>
             )}
@@ -177,6 +189,16 @@ function App() {
     }
   };
 
+  // Show login page if not logged in
+  if (!isLoggedIn) {
+    return (
+      <LoginPage 
+        language={currentLanguage} 
+        onLogin={handleLogin}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
       {/* Header */}
@@ -190,7 +212,7 @@ function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-800">KuralAI</h1>
-                <p className="text-xs text-gray-600">Voice-Powered Grievance System</p>
+                <p className="text-xs text-gray-600">{t('systemSubtitle') || 'Voice-Powered Grievance System'}</p>
               </div>
             </div>
 
@@ -203,7 +225,7 @@ function App() {
                 }`}
               >
                 <Home size={20} />
-                <span>Home</span>
+                <span>{t('home')}</span>
               </button>
 
               <button
@@ -213,7 +235,7 @@ function App() {
                 }`}
               >
                 <Plus size={20} />
-                <span>File Complaint</span>
+                <span>{t('fileComplaint')}</span>
               </button>
 
               <button
@@ -223,7 +245,7 @@ function App() {
                 }`}
               >
                 <List size={20} />
-                <span>Track</span>
+                <span>{t('track')}</span>
               </button>
 
               <button
@@ -233,7 +255,7 @@ function App() {
                 }`}
               >
                 <BarChart size={20} />
-                <span>Admin</span>
+                <span>{t('admin')}</span>
               </button>
             </nav>
 
@@ -251,6 +273,14 @@ function App() {
                 <span className="text-sm text-gray-700">{user?.village}</span>
               </div>
 
+              <button
+                onClick={handleLogout}
+                className="hidden md:flex items-center space-x-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                <LogOut size={16} />
+                <span className="text-sm font-medium">{t('logout')}</span>
+              </button>
+
               {/* Mobile menu button */}
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -267,10 +297,10 @@ function App() {
           <div className="md:hidden border-t border-gray-200 bg-white">
             <div className="px-4 py-4 space-y-2">
               {[
-                { key: 'home', icon: Home, label: 'Home' },
-                { key: 'file', icon: Plus, label: 'File Complaint' },
-                { key: 'track', icon: List, label: 'Track' },
-                { key: 'admin', icon: BarChart, label: 'Admin' }
+                { key: 'home', icon: Home, label: t('home') },
+                { key: 'file', icon: Plus, label: t('fileComplaint') },
+                { key: 'track', icon: List, label: t('track') },
+                { key: 'admin', icon: BarChart, label: t('admin') }
               ].map(({ key, icon: Icon, label }) => (
                 <button
                   key={key}
@@ -293,6 +323,14 @@ function App() {
                   <User size={16} className="text-gray-600" />
                   <span className="text-sm text-gray-700">{user?.village}</span>
                 </div>
+                
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center space-x-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <LogOut size={16} />
+                  <span className="text-sm font-medium">{t('logout')}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -318,21 +356,22 @@ function App() {
 }
 
 const HomeTab: React.FC<{ language: string }> = ({ language }) => {
+  const t = (key: string) => getTranslation(language, key);
+  
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       {/* Hero Section */}
       <div className="text-center py-12">
         <h2 className="text-4xl font-bold text-gray-800 mb-4">
-          Welcome to KuralAI
+          {t('welcomeTitle')}
         </h2>
         <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
-          Your voice-powered village grievance system. Report issues using your voice 
-          in your preferred language and track their resolution through our trusted community network.
+          {t('welcomeSubtitle')}
         </p>
         
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-lg transition-colors">
-            File a Complaint
+            {t('fileComplaint')}
           </button>
           <button className="px-8 py-4 border-2 border-blue-600 text-blue-600 hover:bg-blue-50 rounded-lg font-medium text-lg transition-colors">
             Learn How It Works
@@ -347,11 +386,10 @@ const HomeTab: React.FC<{ language: string }> = ({ language }) => {
             <Settings size={32} className="text-blue-600" />
           </div>
           <h3 className="text-lg font-semibold text-gray-800 mb-3">
-            Voice-Powered
+            {t('voicePowered')}
           </h3>
           <p className="text-gray-600">
-            Record your complaints using voice input in Tamil, Hindi, or English. 
-            No need to type - just speak naturally.
+            {t('voicePoweredDesc')}
           </p>
         </div>
 
@@ -360,11 +398,10 @@ const HomeTab: React.FC<{ language: string }> = ({ language }) => {
             <User size={32} className="text-green-600" />
           </div>
           <h3 className="text-lg font-semibold text-gray-800 mb-3">
-            Community Verified
+            {t('communityVerified')}
           </h3>
           <p className="text-gray-600">
-            Your complaints are reviewed by trusted community members like teachers 
-            and village leaders for authentic resolution.
+            {t('communityVerifiedDesc')}
           </p>
         </div>
 
@@ -373,11 +410,10 @@ const HomeTab: React.FC<{ language: string }> = ({ language }) => {
             <BarChart size={32} className="text-purple-600" />
           </div>
           <h3 className="text-lg font-semibold text-gray-800 mb-3">
-            Real-time Tracking
+            {t('realTimeTracking')}
           </h3>
           <p className="text-gray-600">
-            Track your complaint's progress in real-time with automatic updates 
-            and escalation when needed.
+            {t('realTimeTrackingDesc')}
           </p>
         </div>
       </div>

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { MapPin, Camera, Send, AlertTriangle } from 'lucide-react';
+import { MapPin, Camera, Send, AlertTriangle, Sparkles, Check } from 'lucide-react';
 import VoiceRecorder from './VoiceRecorder';
 import { LocationService, LocationData } from '../utils/locationUtils';
 import { COMPLAINT_CATEGORIES, PRIORITY_LEVELS } from '../utils/constants';
+import { AISuggestion } from '../utils/aiCategorization';
+import { getTranslation } from '../utils/translations';
 
 interface ComplaintFormProps {
   language: string;
@@ -22,10 +24,14 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
   const [location, setLocation] = useState<LocationData | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
   const [images, setImages] = useState<File[]>([]);
+  const [aiSuggestion, setAiSuggestion] = useState<AISuggestion | null>(null);
+  const [showAiSuggestions, setShowAiSuggestions] = useState(false);
 
   const locationService = new LocationService();
   const categories = COMPLAINT_CATEGORIES[language as keyof typeof COMPLAINT_CATEGORIES] || COMPLAINT_CATEGORIES.english;
   const priorities = PRIORITY_LEVELS[language as keyof typeof PRIORITY_LEVELS] || PRIORITY_LEVELS.english;
+
+  const t = (key: string) => getTranslation(language, key);
 
   const getLocation = async () => {
     setLocationLoading(true);
@@ -40,11 +46,25 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
     }
   };
 
-  const handleVoiceRecording = (audioBlob: Blob, audioUrl: string) => {
+  const handleVoiceRecording = (audioBlob: Blob, audioUrl: string, transcription?: string, suggestion?: AISuggestion) => {
     setVoiceRecording({ blob: audioBlob, url: audioUrl });
-    // In a real app, you would send this to a speech-to-text service
-    // For now, we'll use a placeholder text
-    setTranscribedText('Voice recording captured. In a real implementation, this would be transcribed to text.');
+    
+    if (transcription) {
+      setTranscribedText(transcription);
+    }
+    
+    if (suggestion) {
+      setAiSuggestion(suggestion);
+      setShowAiSuggestions(true);
+    }
+  };
+
+  const acceptAiSuggestion = () => {
+    if (aiSuggestion) {
+      setCategory(aiSuggestion.category);
+      setPriority(aiSuggestion.priority);
+      setShowAiSuggestions(false);
+    }
   };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -60,17 +80,17 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
     e.preventDefault();
     
     if (!voiceRecording && !transcribedText) {
-      alert('Please record a voice message or add text description.');
+      alert(t('recordVoiceOrText') || 'Please record a voice message or add text description.');
       return;
     }
 
     if (!category) {
-      alert('Please select a category for your complaint.');
+      alert(t('selectCategoryAlert') || 'Please select a category for your complaint.');
       return;
     }
 
     if (!location) {
-      alert('Please add location information.');
+      alert(t('addLocationAlert') || 'Please add location information.');
       return;
     }
 
@@ -104,22 +124,81 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
       </div>
 
       {/* Transcribed Text Display */}
-      {transcribedText && (
+      {transcribedText && !showAiSuggestions && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h4 className="font-medium text-blue-800 mb-2">Transcribed Text:</h4>
           <p className="text-blue-700">{transcribedText}</p>
         </div>
       )}
 
+      {/* AI Suggestions */}
+      {showAiSuggestions && aiSuggestion && (
+        <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-4">
+          <div className="flex items-center space-x-2 mb-3">
+            <Sparkles size={20} className="text-purple-600" />
+            <h4 className="font-medium text-purple-800">{t('aiSuggestions')}</h4>
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+              {Math.round(aiSuggestion.confidence)}% confidence
+            </span>
+          </div>
+          
+          <div className="space-y-3">
+            <div className="bg-white rounded-lg p-3 border border-purple-100">
+              <div className="text-sm text-gray-600 mb-1">{t('suggestedCategory')}</div>
+              <div className="font-medium text-gray-800">{aiSuggestion.category}</div>
+            </div>
+            
+            <div className="bg-white rounded-lg p-3 border border-purple-100">
+              <div className="text-sm text-gray-600 mb-1">{t('suggestedPriority')}</div>
+              <div className="font-medium text-gray-800">
+                {priorities[aiSuggestion.priority]}
+              </div>
+            </div>
+            
+            {aiSuggestion.keywords.length > 0 && (
+              <div className="bg-white rounded-lg p-3 border border-purple-100">
+                <div className="text-sm text-gray-600 mb-2">Detected Keywords:</div>
+                <div className="flex flex-wrap gap-1">
+                  {aiSuggestion.keywords.map((keyword, index) => (
+                    <span key={index} className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={acceptAiSuggestion}
+                className="flex items-center space-x-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                <Check size={16} />
+                <span>{t('acceptSuggestion')}</span>
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setShowAiSuggestions(false)}
+                className="px-4 py-2 border border-gray-300 hover:border-gray-400 text-gray-700 rounded-lg text-sm font-medium transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Additional Text Input */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Additional Details (Optional)
+          {t('additionalDetails')}
         </label>
         <textarea
           value={transcribedText}
           onChange={(e) => setTranscribedText(e.target.value)}
-          placeholder="Add any additional details about your complaint..."
+          placeholder={t('addDetails')}
           className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
           rows={4}
           disabled={isSubmitting}
@@ -129,7 +208,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
       {/* Category Selection */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Category *
+          {t('category')} *
         </label>
         <select
           value={category}
@@ -138,7 +217,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
           required
           disabled={isSubmitting}
         >
-          <option value="">Select a category</option>
+          <option value="">{t('selectCategory')}</option>
           {categories.map((cat, index) => (
             <option key={index} value={cat}>{cat}</option>
           ))}
@@ -148,7 +227,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
       {/* Priority Selection */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Priority Level
+          {t('priority')}
         </label>
         <div className="grid grid-cols-3 gap-3">
           {Object.entries(priorities).map(([key, label]) => (
@@ -177,7 +256,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
       {/* Location Section */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Location *
+          {t('location')} *
         </label>
         <div className="space-y-3">
           <button
@@ -188,7 +267,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
           >
             <MapPin size={16} />
             <span>
-              {locationLoading ? 'Getting Location...' : 'Get Current Location'}
+              {locationLoading ? t('gettingLocation') : t('getCurrentLocation')}
             </span>
           </button>
 
@@ -196,7 +275,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
             <div className="bg-green-50 border border-green-200 rounded-lg p-3">
               <div className="flex items-center space-x-2 text-green-700">
                 <MapPin size={16} />
-                <span className="font-medium">Location Added</span>
+                <span className="font-medium">{t('locationAdded')}</span>
               </div>
               <p className="text-sm text-green-600 mt-1">
                 {location.address || `${location.latitude}, ${location.longitude}`}
@@ -212,7 +291,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
       {/* Image Upload */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Photos (Optional - Max 3)
+          {t('photos')}
         </label>
         <div className="space-y-3">
           <input
@@ -256,7 +335,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
       >
         <Send size={20} />
         <span>
-          {isSubmitting ? 'Submitting Complaint...' : 'Submit Complaint'}
+          {isSubmitting ? t('submittingComplaint') : t('submitComplaint')}
         </span>
       </button>
     </form>

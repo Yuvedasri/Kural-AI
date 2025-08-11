@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Mic, Square, Play, Pause, RotateCcw } from 'lucide-react';
 import { VoiceRecorder as VoiceRecorderClass } from '../utils/voiceUtils';
+import { analyzeComplaintWithAI, AISuggestion } from '../utils/aiCategorization';
+import { getTranslation } from '../utils/translations';
 
 interface VoiceRecorderProps {
-  onRecordingComplete: (audioBlob: Blob, audioUrl: string) => void;
+  onRecordingComplete: (audioBlob: Blob, audioUrl: string, transcription?: string, aiSuggestion?: AISuggestion) => void;
   isDisabled?: boolean;
   language: string;
 }
@@ -18,6 +20,10 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [transcription, setTranscription] = useState<string>('');
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<AISuggestion | null>(null);
 
   const voiceRecorderRef = useRef<VoiceRecorderClass | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -35,6 +41,8 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
       }
     };
   }, [audioUrl]);
+
+  const t = (key: string) => getTranslation(language, key);
 
   const startTimer = () => {
     timerRef.current = setInterval(() => {
@@ -74,7 +82,30 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         setIsRecording(false);
         stopTimer();
         
-        onRecordingComplete(blob, url);
+        // Start transcription process
+        setIsTranscribing(true);
+        
+        // Simulate transcription (in production, use actual STT service)
+        setTimeout(async () => {
+          const mockTranscription = "The water supply in our area has been disrupted for the past three days. The main pipeline seems to be damaged and needs urgent repair.";
+          setTranscription(mockTranscription);
+          setIsTranscribing(false);
+          
+          // Start AI analysis
+          setIsAnalyzing(true);
+          
+          try {
+            const suggestion = await analyzeComplaintWithAI(mockTranscription, language);
+            setAiSuggestion(suggestion);
+            setIsAnalyzing(false);
+            
+            onRecordingComplete(blob, url, mockTranscription, suggestion);
+          } catch (error) {
+            console.error('AI analysis failed:', error);
+            setIsAnalyzing(false);
+            onRecordingComplete(blob, url, mockTranscription);
+          }
+        }, 2000);
       }
     } catch (error) {
       console.error('Failed to stop recording:', error);
@@ -104,6 +135,10 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     setAudioBlob(null);
     setIsPlaying(false);
     setRecordingTime(0);
+    setTranscription('');
+    setIsTranscribing(false);
+    setIsAnalyzing(false);
+    setAiSuggestion(null);
   };
 
   const formatTime = (seconds: number) => {
@@ -116,10 +151,10 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-100">
       <div className="text-center mb-6">
         <h3 className="text-lg font-semibold text-gray-800 mb-2">
-          Voice Recording
+          {t('voiceRecording')}
         </h3>
         <p className="text-sm text-gray-600">
-          Record your complaint clearly
+          {t('recordComplaint')}
         </p>
       </div>
 
@@ -156,8 +191,28 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
             {formatTime(recordingTime)}
           </div>
           {isRecording && (
-            <div className="text-sm text-red-600 mt-1">Recording...</div>
+            <div className="text-sm text-red-600 mt-1">{t('recording')}</div>
           )}
+        </div>
+      )}
+
+      {/* Processing Status */}
+      {(isTranscribing || isAnalyzing) && (
+        <div className="text-center mb-4">
+          <div className="flex items-center justify-center space-x-2 text-blue-600">
+            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-sm font-medium">
+              {isTranscribing ? t('transcribing') : t('analyzing')}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Transcription Display */}
+      {transcription && !isTranscribing && (
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <h4 className="font-medium text-blue-800 mb-2">Transcribed Text:</h4>
+          <p className="text-blue-700 text-sm">{transcription}</p>
         </div>
       )}
 
@@ -170,7 +225,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
             className="flex items-center space-x-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors"
           >
             <Mic size={20} />
-            <span>Start Recording</span>
+            <span>{t('startRecording')}</span>
           </button>
         )}
 
@@ -180,7 +235,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
             className="flex items-center space-x-2 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
           >
             <Square size={20} />
-            <span>Stop Recording</span>
+            <span>{t('stopRecording')}</span>
           </button>
         )}
 
@@ -191,7 +246,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
               className="flex items-center space-x-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
             >
               {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-              <span>{isPlaying ? 'Pause' : 'Play'}</span>
+              <span>{isPlaying ? 'Pause' : t('playRecording')}</span>
             </button>
 
             <button
@@ -199,7 +254,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
               className="flex items-center space-x-2 px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
             >
               <RotateCcw size={20} />
-              <span>Re-record</span>
+              <span>{t('reRecord')}</span>
             </button>
           </>
         )}
