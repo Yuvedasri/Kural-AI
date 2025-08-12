@@ -3,18 +3,21 @@ import { BarChart, Users, AlertCircle, CheckCircle, Clock, TrendingUp } from 'lu
 import { Complaint } from '../types';
 import ComplaintCard from './ComplaintCard';
 import { storage } from '../utils/localStorage';
+import { notificationService } from '../utils/notificationService';
 import { getTranslation } from '../utils/translations';
 
 interface AdminDashboardProps {
   language: string;
   complaints: Complaint[];
   onComplaintClick: (complaint: Complaint) => void;
+  onComplaintUpdate: (complaintId: string, updates: Partial<Complaint>) => void;
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
   language,
   complaints,
-  onComplaintClick
+  onComplaintClick,
+  onComplaintUpdate
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterPriority, setFilterPriority] = useState<string>('all');
@@ -29,6 +32,84 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   });
 
   const t = (key: string) => getTranslation(language, key);
+
+  const handleAcceptComplaint = async (complaint: Complaint) => {
+    const updates = {
+      status: 'in_progress' as const,
+      updatedAt: new Date(),
+      verificationChain: [
+        ...complaint.verificationChain,
+        {
+          level: complaint.verificationChain.length + 1,
+          verifierId: 'admin-001',
+          verifierName: 'Admin User',
+          verifierRole: 'System Administrator',
+          status: 'approved' as const,
+          timestamp: new Date(),
+          notes: 'Complaint accepted and moved to in-progress'
+        }
+      ]
+    };
+
+    onComplaintUpdate(complaint.id, updates);
+
+    // Send notifications to user
+    const message = `Your complaint (ID: ${complaint.id.slice(-8).toUpperCase()}) has been accepted and is now in progress.`;
+    await notificationService.sendTextNotification(complaint.userId, complaint.id, 'in_progress', message);
+    await notificationService.sendVoiceNotification(complaint.userId, message, language);
+  };
+
+  const handleRejectComplaint = async (complaint: Complaint) => {
+    const updates = {
+      status: 'rejected' as const,
+      updatedAt: new Date(),
+      verificationChain: [
+        ...complaint.verificationChain,
+        {
+          level: complaint.verificationChain.length + 1,
+          verifierId: 'admin-001',
+          verifierName: 'Admin User',
+          verifierRole: 'System Administrator',
+          status: 'rejected' as const,
+          timestamp: new Date(),
+          notes: 'Complaint rejected after review'
+        }
+      ]
+    };
+
+    onComplaintUpdate(complaint.id, updates);
+
+    // Send notifications to user
+    const message = `Your complaint (ID: ${complaint.id.slice(-8).toUpperCase()}) has been reviewed and rejected. Please contact support for more information.`;
+    await notificationService.sendTextNotification(complaint.userId, complaint.id, 'rejected', message);
+    await notificationService.sendVoiceNotification(complaint.userId, message, language);
+  };
+
+  const handleResolveComplaint = async (complaint: Complaint) => {
+    const updates = {
+      status: 'resolved' as const,
+      updatedAt: new Date(),
+      verificationChain: [
+        ...complaint.verificationChain,
+        {
+          level: complaint.verificationChain.length + 1,
+          verifierId: 'admin-001',
+          verifierName: 'Admin User',
+          verifierRole: 'System Administrator',
+          status: 'approved' as const,
+          timestamp: new Date(),
+          notes: 'Complaint resolved successfully'
+        }
+      ]
+    };
+
+    onComplaintUpdate(complaint.id, updates);
+
+    // Send notifications to user
+    const message = `Great news! Your complaint (ID: ${complaint.id.slice(-8).toUpperCase()}) has been resolved. Thank you for using KuralAI.`;
+    await notificationService.sendTextNotification(complaint.userId, complaint.id, 'resolved', message);
+    await notificationService.sendVoiceNotification(complaint.userId, message, language);
+  };
 
   useEffect(() => {
     const calculateStats = () => {
@@ -207,16 +288,62 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         {filteredComplaints.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-4">
             {filteredComplaints
               .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
               .map((complaint) => (
-                <ComplaintCard
+                <div
                   key={complaint.id}
-                  complaint={complaint}
-                  language={language}
-                  onClick={() => onComplaintClick(complaint)}
-                />
+                  className="bg-gray-50 rounded-lg p-4 border border-gray-200"
+                >
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-2">
+                      <ComplaintCard
+                        complaint={complaint}
+                        language={language}
+                        onClick={() => onComplaintClick(complaint)}
+                      />
+                    </div>
+                    
+                    <div className="flex flex-col space-y-2">
+                      <div className="text-sm font-medium text-gray-700 mb-2">
+                        Admin Actions
+                      </div>
+                      
+                      {complaint.status === 'submitted' && (
+                        <>
+                          <button
+                            onClick={() => handleAcceptComplaint(complaint)}
+                            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+                          >
+                            ✓ Accept
+                          </button>
+                          <button
+                            onClick={() => handleRejectComplaint(complaint)}
+                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+                          >
+                            ✗ Reject
+                          </button>
+                        </>
+                      )}
+                      
+                      {complaint.status === 'in_progress' && (
+                        <button
+                          onClick={() => handleResolveComplaint(complaint)}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                        >
+                          ✓ Mark Resolved
+                        </button>
+                      )}
+                      
+                      {(complaint.status === 'resolved' || complaint.status === 'rejected') && (
+                        <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm text-center">
+                          {complaint.status === 'resolved' ? '✓ Resolved' : '✗ Rejected'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               ))}
           </div>
         ) : (
