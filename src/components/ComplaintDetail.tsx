@@ -105,6 +105,9 @@ const ComplaintDetail: React.FC<ComplaintDetailProps> = ({
                   <source src={complaint.voiceRecording} type="audio/webm" />
                   Your browser does not support the audio element.
                 </audio>
+                <div className="mt-3 text-sm text-blue-700">
+                  <strong>Original Voice Complaint:</strong> Listen to the user's voice recording above
+                </div>
               </div>
             </div>
           )}
@@ -114,12 +117,19 @@ const ComplaintDetail: React.FC<ComplaintDetailProps> = ({
             <div className="bg-white rounded-lg shadow-md p-6">
               <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center space-x-2">
                 <FileText size={20} />
-                <span>Description</span>
+                <span>Transcribed Text</span>
               </h3>
-              <div className="prose max-w-none">
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="text-sm text-green-700 font-medium mb-2">
+                  Auto-transcribed from voice:
+                </div>
                 <p className="text-gray-700 leading-relaxed">
                   {complaint.transcribedText}
                 </p>
+              </div>
+              <div className="mt-3 text-xs text-gray-500">
+                Category: <span className="font-medium">{complaint.category}</span> | 
+                Priority: <span className="font-medium">{complaint.priority}</span>
               </div>
             </div>
           )}

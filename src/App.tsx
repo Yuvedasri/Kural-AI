@@ -9,6 +9,7 @@ import AdminDashboard from './components/AdminDashboard';
 import { User as UserType, Complaint } from './types';
 import { storage } from './utils/localStorage';
 import { LANGUAGES } from './utils/constants';
+import { notificationService } from './utils/notificationService';
 import { getTranslation } from './utils/translations';
 
 function App() {
@@ -39,6 +40,9 @@ function App() {
     // Load language preference
     const storedLanguage = storage.getLanguage();
     setCurrentLanguage(storedLanguage);
+
+    // Request notification permission
+    notificationService.requestNotificationPermission();
   }, []);
 
   const handleLogin = (user: UserType) => {
@@ -119,6 +123,17 @@ function App() {
     }
   };
 
+  const handleComplaintUpdate = (complaintId: string, updates: Partial<Complaint>) => {
+    storage.updateComplaint(complaintId, updates);
+    setComplaints(prev => 
+      prev.map(complaint => 
+        complaint.id === complaintId 
+          ? { ...complaint, ...updates }
+          : complaint
+      )
+    );
+  };
+
   const getTabContent = () => {
     if (selectedComplaint) {
       return (
@@ -182,6 +197,7 @@ function App() {
             language={currentLanguage}
             complaints={complaints}
             onComplaintClick={setSelectedComplaint}
+            onComplaintUpdate={handleComplaintUpdate}
           />
         );
       default:
