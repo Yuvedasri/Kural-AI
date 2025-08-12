@@ -25,63 +25,10 @@ export class SpeechToTextService {
       return this.getMockTranscription();
     }
 
-    return new Promise((resolve, reject) => {
-      // Set language based on user preference
-      const languageMap: { [key: string]: string } = {
-        'tamil': 'ta-IN',
-        'hindi': 'hi-IN',
-        'english': 'en-US'
-      };
-      
-      this.recognition.lang = languageMap[language] || 'en-US';
-      
-      let finalTranscript = '';
-      
-      this.recognition.onresult = (event: any) => {
-        let interimTranscript = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript + ' ';
-          } else {
-            interimTranscript += transcript;
-          }
-        }
-        
-        if (finalTranscript.trim()) {
-          resolve(finalTranscript.trim());
-        }
-      };
-
-      this.recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        // Fallback to mock transcription
-        resolve(this.getMockTranscription());
-      };
-
-      this.recognition.onend = () => {
-        if (!finalTranscript.trim()) {
-          resolve(this.getMockTranscription());
-        }
-      };
-
-      // Convert blob to audio URL and play silently to trigger recognition
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-      
-      audio.onloadeddata = () => {
-        this.recognition.start();
-        
-        // Stop recognition after audio duration + buffer
-        setTimeout(() => {
-          this.recognition.stop();
-        }, (audio.duration + 2) * 1000);
-      };
-      
-      audio.load();
-    });
+    // Browser's SpeechRecognition API is designed for live microphone input,
+    // not for transcribing pre-recorded audio blobs. Return mock transcription.
+    console.warn('Browser SpeechRecognition API cannot transcribe audio blobs. Using mock transcription.');
+    return this.getMockTranscription();
   }
 
   private getMockTranscription(): string {
