@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Mic, Square, Play, Pause, RotateCcw } from 'lucide-react';
 import { VoiceRecorder as VoiceRecorderClass } from '../utils/voiceUtils';
 import { analyzeComplaintWithAI, AISuggestion } from '../utils/aiCategorization';
+import { speechToTextService } from '../utils/speechToText';
 import { getTranslation } from '../utils/translations';
 
 interface VoiceRecorderProps {
@@ -82,30 +83,28 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         setIsRecording(false);
         stopTimer();
         
-        // Start transcription process
+        // Start real transcription process
         setIsTranscribing(true);
         
-        // Simulate transcription (in production, use actual STT service)
-        setTimeout(async () => {
-          const mockTranscription = "The water supply in our area has been disrupted for the past three days. The main pipeline seems to be damaged and needs urgent repair.";
-          setTranscription(mockTranscription);
+        try {
+          // Real speech-to-text transcription
+          const transcribedText = await speechToTextService.transcribeAudio(blob, language);
+          setTranscription(transcribedText);
           setIsTranscribing(false);
           
           // Start AI analysis
           setIsAnalyzing(true);
           
-          try {
-            const suggestion = await analyzeComplaintWithAI(mockTranscription, language);
-            setAiSuggestion(suggestion);
-            setIsAnalyzing(false);
-            
-            onRecordingComplete(blob, url, mockTranscription, suggestion);
-          } catch (error) {
-            console.error('AI analysis failed:', error);
-            setIsAnalyzing(false);
-            onRecordingComplete(blob, url, mockTranscription);
-          }
-        }, 2000);
+          const suggestion = await analyzeComplaintWithAI(transcribedText, language);
+          setAiSuggestion(suggestion);
+          setIsAnalyzing(false);
+          
+          onRecordingComplete(blob, url, transcribedText, suggestion);
+        } catch (error) {
+          console.error('Transcription failed:', error);
+          setIsTranscribing(false);
+          onRecordingComplete(blob, url);
+        }
       }
     } catch (error) {
       console.error('Failed to stop recording:', error);
