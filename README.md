@@ -110,5 +110,5 @@ The system is structured to be easily deployed on platforms like Render or Herok
 - Deeper escalation matrices integrating multiple administrative tiers.
 
 ## Author
-Yuvedাস்ரி 
-*(Student Project)*
+YUVEDA  
+
