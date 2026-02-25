@@ -6,44 +6,71 @@ import ComplaintForm from './components/ComplaintForm';
 import ComplaintCard from './components/ComplaintCard';
 import ComplaintDetail from './components/ComplaintDetail';
 import AdminDashboard from './components/AdminDashboard';
+import ComplaintSuccess from './components/ComplaintSuccess';
 import { User as UserType, Complaint } from './types';
 import { storage } from './utils/localStorage';
-import { LANGUAGES } from './utils/constants';
 import { notificationService } from './utils/notificationService';
-import { getTranslation } from './utils/translations';
+import { useTranslation } from 'react-i18next';
 
 function App() {
   const [currentLanguage, setCurrentLanguage] = useState('english');
   const [languageSelectorOpen, setLanguageSelectorOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'home' | 'file' | 'track' | 'admin'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'file' | 'track' | 'admin' | 'success'>('home');
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [user, setUser] = useState<UserType | null>(null);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successData, setSuccessData] = useState<any>(null);
+
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  const t = (key: string) => getTranslation(currentLanguage, key);
+  const { t, i18n } = useTranslation();
 
   useEffect(() => {
-    const storedUser = storage.getUser();
-    if (storedUser) {
-      setUser(storedUser);
+    const token = localStorage.getItem('token');
+    if (token) {
       setIsLoggedIn(true);
-      setCurrentLanguage(storedUser.preferredLanguage);
-    }
+      const storedUser = storage.getUser();
+      if (storedUser) {
+        setUser(storedUser);
+        setCurrentLanguage(storedUser.preferredLanguage);
+      }
 
-    // Load complaints
-    const storedComplaints = storage.getComplaints();
-    setComplaints(storedComplaints);
+      // Load complaints from backend
+      import('./api/axios').then(({ default: api }) => {
+        api.get('/complaints')
+          .then(res => {
+            const mappedComplaints = res.data.map((c: any) => ({
+              id: c._id,
+              userId: c.userId?._id || 'unknown',
+              transcribedText: c.transcriptText,
+              category: c.category,
+              priority: c.priorityLabel === 'High' ? 'urgent' : c.priorityLabel === 'Medium' ? 'normal' : 'low',
+              location: c.location,
+              mediaFiles: [],
+              status: c.status === 'Submitted' ? 'submitted' :
+                c.status === 'InProgress' ? 'in_progress' :
+                  c.status === 'Completed' ? 'resolved' : 'rejected',
+              createdAt: new Date(c.createdAt),
+              updatedAt: new Date(c.updatedAt),
+              verificationChain: []
+            }));
+            setComplaints(mappedComplaints);
+          })
+          .catch(err => console.error('Failed to load complaints', err));
+      });
+    }
 
     // Load language preference
     const storedLanguage = storage.getLanguage();
-    setCurrentLanguage(storedLanguage);
+    if (storedLanguage) {
+      setCurrentLanguage(storedLanguage);
+      i18n.changeLanguage(storedLanguage === 'tamil' ? 'ta' : storedLanguage === 'hindi' ? 'hi' : 'en');
+    }
 
     // Request notification permission
     notificationService.requestNotificationPermission();
-  }, []);
+  }, [isLoggedIn]);
 
   const handleLogin = (user: UserType) => {
     setUser(user);
@@ -51,13 +78,16 @@ function App() {
     storage.setUser(user);
     setCurrentLanguage(user.preferredLanguage);
     storage.setLanguage(user.preferredLanguage);
+    i18n.changeLanguage(user.preferredLanguage === 'tamil' ? 'ta' : user.preferredLanguage === 'hindi' ? 'hi' : 'en');
   };
 
   const handleLogout = () => {
     setUser(null);
     setIsLoggedIn(false);
     storage.removeUser();
+    localStorage.removeItem('token');
     setComplaints([]);
+    setSuccessData(null);
     setActiveTab('home');
     setSelectedComplaint(null);
   };
@@ -65,6 +95,7 @@ function App() {
   const handleLanguageChange = (language: string) => {
     setCurrentLanguage(language);
     storage.setLanguage(language);
+    i18n.changeLanguage(language === 'tamil' ? 'ta' : language === 'hindi' ? 'hi' : 'en');
     if (user) {
       const updatedUser = { ...user, preferredLanguage: language as any };
       setUser(updatedUser);
@@ -73,61 +104,38 @@ function App() {
   };
 
   const handleComplaintSubmit = async (complaintData: any) => {
-    if (!user) return;
-
-    setIsSubmitting(true);
-    
-    try {
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      const newComplaint: Complaint = {
-        id: `complaint-${Date.now()}`,
-        userId: user.id,
-        voiceRecording: complaintData.voiceRecording ? URL.createObjectURL(complaintData.voiceRecording) : undefined,
-        transcribedText: complaintData.transcribedText,
-        category: complaintData.category,
-        priority: complaintData.priority,
-        location: {
-          latitude: complaintData.location.latitude,
-          longitude: complaintData.location.longitude,
-          address: complaintData.location.address
-        },
-        mediaFiles: complaintData.images?.map((img: File) => URL.createObjectURL(img)) || [],
-        status: 'submitted',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        verificationChain: [
-          {
-            level: 1,
-            verifierId: 'verifier-001',
-            verifierName: 'Priya Sharma',
-            verifierRole: 'Village Teacher',
-            status: 'pending',
-            timestamp: new Date()
-          }
-        ]
-      };
-
-      storage.addComplaint(newComplaint);
-      setComplaints(prev => [...prev, newComplaint]);
-      setActiveTab('track');
-      
-      // Show success message
-      alert(t('complaintSubmitted'));
-    } catch (error) {
-      console.error('Failed to submit complaint:', error);
-      alert('Failed to submit complaint. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    setSuccessData(complaintData);
+    setActiveTab('success');
+    // Rely on updated backend complaints via periodic or manual refresh
+    // For now we just refresh window or fetch directly in ComplaintForm so we get real AI breakdown
+    // But we will add it to context just in case
+    import('./api/axios').then(({ default: api }) => {
+      api.get('/complaints').then(res => {
+        const mappedComplaints = res.data.map((c: any) => ({
+          id: c._id,
+          userId: c.userId?._id || 'unknown',
+          transcribedText: c.transcriptText,
+          category: c.category,
+          priority: c.priorityLabel === 'High' ? 'urgent' : c.priorityLabel === 'Medium' ? 'normal' : 'low',
+          location: c.location,
+          mediaFiles: [],
+          status: c.status === 'Submitted' ? 'submitted' :
+            c.status === 'InProgress' ? 'in_progress' :
+              c.status === 'Completed' ? 'resolved' : 'rejected',
+          createdAt: new Date(c.createdAt),
+          updatedAt: new Date(c.updatedAt),
+          verificationChain: []
+        }));
+        setComplaints(mappedComplaints);
+      });
+    });
   };
 
   const handleComplaintUpdate = (complaintId: string, updates: Partial<Complaint>) => {
     storage.updateComplaint(complaintId, updates);
-    setComplaints(prev => 
-      prev.map(complaint => 
-        complaint.id === complaintId 
+    setComplaints(prev =>
+      prev.map(complaint =>
+        complaint.id === complaintId
           ? { ...complaint, ...updates }
           : complaint
       )
@@ -147,13 +155,22 @@ function App() {
 
     switch (activeTab) {
       case 'home':
-        return <HomeTab language={currentLanguage} />;
+        return <HomeTab />;
       case 'file':
         return (
           <ComplaintForm
-            language={currentLanguage}
             onSubmit={handleComplaintSubmit}
-            isSubmitting={isSubmitting}
+          />
+        );
+      case 'success':
+        return (
+          <ComplaintSuccess
+            language={currentLanguage}
+            complaintData={successData}
+            onViewComplaints={() => {
+              setActiveTab('track');
+              setSuccessData(null);
+            }}
           />
         );
       case 'track':
@@ -163,7 +180,7 @@ function App() {
               <h2 className="text-xl font-bold text-gray-800 mb-2">{t('myComplaints') || 'My Complaints'}</h2>
               <p className="text-gray-600">{t('trackStatus') || 'Track the status of your submitted complaints'}</p>
             </div>
-            
+
             {complaints.length > 0 ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {complaints
@@ -201,15 +218,15 @@ function App() {
           />
         );
       default:
-        return <HomeTab language={currentLanguage} />;
+        return <HomeTab />;
     }
   };
 
   // Show login page if not logged in
   if (!isLoggedIn) {
     return (
-      <LoginPage 
-        language={currentLanguage} 
+      <LoginPage
+        language={currentLanguage}
         onLogin={handleLogin}
       />
     );
@@ -235,40 +252,36 @@ function App() {
             {/* Desktop Navigation */}
             <nav className="hidden md:flex space-x-8">
               <button
-                onClick={() => {setActiveTab('home'); setSelectedComplaint(null);}}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${
-                  activeTab === 'home' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
-                }`}
+                onClick={() => { setActiveTab('home'); setSelectedComplaint(null); }}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${activeTab === 'home' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
+                  }`}
               >
                 <Home size={20} />
                 <span>{t('home')}</span>
               </button>
 
               <button
-                onClick={() => {setActiveTab('file'); setSelectedComplaint(null);}}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${
-                  activeTab === 'file' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
-                }`}
+                onClick={() => { setActiveTab('file'); setSelectedComplaint(null); }}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${activeTab === 'file' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
+                  }`}
               >
                 <Plus size={20} />
                 <span>{t('fileComplaint')}</span>
               </button>
 
               <button
-                onClick={() => {setActiveTab('track'); setSelectedComplaint(null);}}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${
-                  activeTab === 'track' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
-                }`}
+                onClick={() => { setActiveTab('track'); setSelectedComplaint(null); }}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${activeTab === 'track' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
+                  }`}
               >
                 <List size={20} />
                 <span>{t('track')}</span>
               </button>
 
               <button
-                onClick={() => {setActiveTab('admin'); setSelectedComplaint(null);}}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${
-                  activeTab === 'admin' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
-                }`}
+                onClick={() => { setActiveTab('admin'); setSelectedComplaint(null); }}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors ${activeTab === 'admin' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:text-blue-600'
+                  }`}
               >
                 <BarChart size={20} />
                 <span>{t('admin')}</span>
@@ -325,21 +338,20 @@ function App() {
                     setSelectedComplaint(null);
                     setMobileMenuOpen(false);
                   }}
-                  className={`w-full flex items-center space-x-3 px-3 py-3 rounded-lg font-medium transition-colors ${
-                    activeTab === key ? 'text-blue-600 bg-blue-50' : 'text-gray-700'
-                  }`}
+                  className={`w-full flex items-center space-x-3 px-3 py-3 rounded-lg font-medium transition-colors ${activeTab === key ? 'text-blue-600 bg-blue-50' : 'text-gray-700'
+                    }`}
                 >
                   <Icon size={20} />
                   <span>{label}</span>
                 </button>
               ))}
-              
+
               <div className="pt-2 border-t border-gray-200">
                 <div className="flex items-center space-x-2 px-3 py-2">
                   <User size={16} className="text-gray-600" />
                   <span className="text-sm text-gray-700">{user?.village}</span>
                 </div>
-                
+
                 <button
                   onClick={handleLogout}
                   className="w-full flex items-center space-x-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -371,9 +383,9 @@ function App() {
   );
 }
 
-const HomeTab: React.FC<{ language: string }> = ({ language }) => {
-  const t = (key: string) => getTranslation(language, key);
-  
+const HomeTab: React.FC = () => {
+  const { t } = useTranslation();
+
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       {/* Hero Section */}
@@ -384,7 +396,7 @@ const HomeTab: React.FC<{ language: string }> = ({ language }) => {
         <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
           {t('welcomeSubtitle')}
         </p>
-        
+
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-lg transition-colors">
             {t('fileComplaint')}
@@ -437,15 +449,15 @@ const HomeTab: React.FC<{ language: string }> = ({ language }) => {
       {/* How It Works */}
       <div className="bg-white rounded-xl shadow-md p-8">
         <h3 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-          How KuralAI Works
+          {t('howItWorks')}
         </h3>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           {[
-            { step: 1, title: 'Record Voice', desc: 'Speak your complaint in your preferred language' },
-            { step: 2, title: 'Add Location', desc: 'Automatically capture the issue location with GPS' },
-            { step: 3, title: 'Community Review', desc: 'Trusted verifiers review and validate your complaint' },
-            { step: 4, title: 'Resolution', desc: 'Get updates and track progress until resolution' }
+            { step: 1, title: t('recordVoiceStep'), desc: t('recordVoiceDesc') },
+            { step: 2, title: t('addLocationStep'), desc: t('addLocationDesc') },
+            { step: 3, title: t('communityReviewStep'), desc: t('communityReviewDesc') },
+            { step: 4, title: t('resolutionStep'), desc: t('resolutionDesc') }
           ].map(({ step, title, desc }) => (
             <div key={step} className="text-center">
               <div className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-lg mx-auto mb-3">
@@ -463,19 +475,19 @@ const HomeTab: React.FC<{ language: string }> = ({ language }) => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
           <div>
             <div className="text-3xl font-bold mb-2">1,247</div>
-            <div className="text-blue-100">Complaints Filed</div>
+            <div className="text-blue-100">{t('complaintsFiled')}</div>
           </div>
           <div>
             <div className="text-3xl font-bold mb-2">89%</div>
-            <div className="text-blue-100">Resolution Rate</div>
+            <div className="text-blue-100">{t('resolutionRate')}</div>
           </div>
           <div>
             <div className="text-3xl font-bold mb-2">2.3</div>
-            <div className="text-blue-100">Days Avg Response</div>
+            <div className="text-blue-100">{t('avgResponse')}</div>
           </div>
           <div>
             <div className="text-3xl font-bold mb-2">156</div>
-            <div className="text-blue-100">Active Villages</div>
+            <div className="text-blue-100">{t('activeVillages')}</div>
           </div>
         </div>
       </div>

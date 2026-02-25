@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Users, AlertCircle, CheckCircle, Clock, TrendingUp } from 'lucide-react';
 import { Complaint } from '../types';
 import ComplaintCard from './ComplaintCard';
-import { storage } from '../utils/localStorage';
 import { notificationService } from '../utils/notificationService';
 import { getTranslation } from '../utils/translations';
+import api from '../api/axios';
 
 interface AdminDashboardProps {
   language: string;
@@ -15,134 +15,98 @@ interface AdminDashboardProps {
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
   language,
-  complaints,
+  // we will fetch complaints dynamically now
+  // complaints, 
   onComplaintClick,
   onComplaintUpdate
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterPriority, setFilterPriority] = useState<string>('all');
+
+  const [dynamicComplaints, setDynamicComplaints] = useState<any[]>([]);
   const [stats, setStats] = useState({
     total: 0,
     submitted: 0,
-    verified: 0,
     inProgress: 0,
     resolved: 0,
     rejected: 0,
-    urgent: 0
+    urgent: 0,
+    avgResponse: 0,
+    resolutionRate: 0
   });
 
   const t = (key: string) => getTranslation(language, key);
 
-  const handleAcceptComplaint = async (complaint: Complaint) => {
-    const updates = {
-      status: 'in_progress' as const,
-      updatedAt: new Date(),
-      verificationChain: [
-        ...complaint.verificationChain,
-        {
-          level: complaint.verificationChain.length + 1,
-          verifierId: 'admin-001',
-          verifierName: 'Admin User',
-          verifierRole: 'System Administrator',
-          status: 'approved' as const,
-          timestamp: new Date(),
-          notes: 'Complaint accepted and moved to in-progress'
-        }
-      ]
-    };
+  const fetchDashboardData = async () => {
+    try {
+      const statsRes = await api.get('/dashboard/stats');
+      const compRes = await api.get('/complaints');
 
-    onComplaintUpdate(complaint.id, updates);
+      // Admin stats
+      const s = statsRes.data;
+      setStats({
+        total: s.totalComplaints || 0,
+        submitted: s.submitted || 0,
+        inProgress: s.inProgress || 0,
+        resolved: s.completed || 0,
+        rejected: s.rejected || 0,
+        urgent: s.highPriority || 0,
+        avgResponse: s.averageResolutionTimeHours || 0,
+        resolutionRate: s.totalComplaints ? Math.round((s.completed / s.totalComplaints) * 100) : 0
+      });
 
-    // Send notifications to user
-    const message = `Your complaint (ID: ${complaint.id.slice(-8).toUpperCase()}) has been accepted and is now in progress.`;
-    await notificationService.sendTextNotification(complaint.userId, complaint.id, 'in_progress', message);
-    await notificationService.sendVoiceNotification(complaint.userId, message, language);
-  };
+      setDynamicComplaints(compRes.data || []);
 
-  const handleRejectComplaint = async (complaint: Complaint) => {
-    const updates = {
-      status: 'rejected' as const,
-      updatedAt: new Date(),
-      verificationChain: [
-        ...complaint.verificationChain,
-        {
-          level: complaint.verificationChain.length + 1,
-          verifierId: 'admin-001',
-          verifierName: 'Admin User',
-          verifierRole: 'System Administrator',
-          status: 'rejected' as const,
-          timestamp: new Date(),
-          notes: 'Complaint rejected after review'
-        }
-      ]
-    };
-
-    onComplaintUpdate(complaint.id, updates);
-
-    // Send notifications to user
-    const message = `Your complaint (ID: ${complaint.id.slice(-8).toUpperCase()}) has been reviewed and rejected. Please contact support for more information.`;
-    await notificationService.sendTextNotification(complaint.userId, complaint.id, 'rejected', message);
-    await notificationService.sendVoiceNotification(complaint.userId, message, language);
-  };
-
-  const handleResolveComplaint = async (complaint: Complaint) => {
-    const updates = {
-      status: 'resolved' as const,
-      updatedAt: new Date(),
-      verificationChain: [
-        ...complaint.verificationChain,
-        {
-          level: complaint.verificationChain.length + 1,
-          verifierId: 'admin-001',
-          verifierName: 'Admin User',
-          verifierRole: 'System Administrator',
-          status: 'approved' as const,
-          timestamp: new Date(),
-          notes: 'Complaint resolved successfully'
-        }
-      ]
-    };
-
-    onComplaintUpdate(complaint.id, updates);
-
-    // Send notifications to user
-    const message = `Great news! Your complaint (ID: ${complaint.id.slice(-8).toUpperCase()}) has been resolved. Thank you for using KuralAI.`;
-    await notificationService.sendTextNotification(complaint.userId, complaint.id, 'resolved', message);
-    await notificationService.sendVoiceNotification(complaint.userId, message, language);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+    }
   };
 
   useEffect(() => {
-    const calculateStats = () => {
-      const total = complaints.length;
-      const submitted = complaints.filter(c => c.status === 'submitted').length;
-      const verified = complaints.filter(c => c.status === 'verified').length;
-      const inProgress = complaints.filter(c => c.status === 'in_progress').length;
-      const resolved = complaints.filter(c => c.status === 'resolved').length;
-      const rejected = complaints.filter(c => c.status === 'rejected').length;
-      const urgent = complaints.filter(c => c.priority === 'urgent').length;
+    fetchDashboardData();
+  }, []);
 
-      setStats({
-        total,
-        submitted,
-        verified,
-        inProgress,
-        resolved,
-        rejected,
-        urgent
-      });
+  const handleUpdateStatus = async (complaintId: string, status: string) => {
+    try {
+      await api.patch(`/complaints/${complaintId}/status`, { status });
+      // Refresh data
+      fetchDashboardData();
+
+      // We could trigger notifications here via notificationService but backend might handle it
+    } catch (err) {
+      console.error('Error updating status', err);
+      alert('Failed to update status: ' + (err.response?.data?.message || err.message || JSON.stringify(err)));
+    }
+  };
+
+  const filteredComplaints = dynamicComplaints.filter(complaint => {
+    const statusMap: any = {
+      'submitted': 'Submitted',
+      'in_progress': 'InProgress',
+      'resolved': 'Completed',
+      'rejected': 'Rejected'
     };
 
-    calculateStats();
-  }, [complaints]);
+    // Convert frontend filter names to backend filter names
+    const backendStatus = statusMap[filterStatus] || filterStatus;
 
-  const filteredComplaints = complaints.filter(complaint => {
-    const statusMatch = filterStatus === 'all' || complaint.status === filterStatus;
-    const priorityMatch = filterPriority === 'all' || complaint.priority === filterPriority;
+    const statusMatch = filterStatus === 'all' || complaint.status === backendStatus;
+
+    // Priority filter check
+    const prioMap: any = {
+      'urgent': 'High',
+      'normal': 'Medium',
+      'low': 'Low'
+    };
+    const backendPrio = prioMap[filterPriority] || filterPriority;
+
+    const priorityMatch = filterPriority === 'all' || complaint.priorityLabel === backendPrio;
+
     return statusMatch && priorityMatch;
   });
 
   const StatCard = ({ icon, title, value, color = 'blue' }: any) => (
-    <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-l-blue-500">
+    <div className={`bg-white rounded-lg shadow-md p-6 border-l-4 border-l-${color}-500`}>
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-gray-600 font-medium">{title}</p>
@@ -174,28 +138,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           icon={<Users size={24} className="text-blue-600" />}
-         title={t('totalComplaints') || 'Total Complaints'}
+          title={t('totalComplaints') || 'Total Complaints'}
           value={stats.total}
           color="blue"
         />
-        
+
         <StatCard
           icon={<AlertCircle size={24} className="text-yellow-600" />}
-         title={t('pendingReview') || 'Pending Review'}
+          title={t('pendingReview') || 'Pending Review'}
           value={stats.submitted}
           color="yellow"
         />
-        
+
         <StatCard
           icon={<Clock size={24} className="text-purple-600" />}
-         title={t('inProgress') || 'In Progress'}
+          title={t('inProgress') || 'In Progress'}
           value={stats.inProgress}
           color="purple"
         />
-        
+
         <StatCard
           icon={<CheckCircle size={24} className="text-green-600" />}
-         title={t('resolved') || 'Resolved'}
+          title={t('resolved') || 'Resolved'}
           value={stats.resolved}
           color="green"
         />
@@ -220,7 +184,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <h3 className="text-lg font-semibold text-gray-800">{t('resolutionRate') || 'Resolution Rate'}</h3>
           </div>
           <div className="text-3xl font-bold text-green-600">
-            {stats.total > 0 ? Math.round((stats.resolved / stats.total) * 100) : 0}%
+            {stats.resolutionRate}%
           </div>
           <div className="text-sm text-gray-600 mt-2">
             {stats.resolved} of {stats.total} complaints resolved
@@ -232,9 +196,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <Clock size={20} className="text-blue-600" />
             <h3 className="text-lg font-semibold text-gray-800">{t('avgResponse') || 'Average Response'}</h3>
           </div>
-          <div className="text-3xl font-bold text-blue-600">2.3</div>
+          <div className="text-3xl font-bold text-blue-600">{stats.avgResponse}</div>
           <div className="text-sm text-gray-600 mt-2">
-            Days average response time
+            Hours average response time
           </div>
         </div>
       </div>
@@ -254,7 +218,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             >
               <option value="all">{t('allStatus') || 'All Status'}</option>
               <option value="submitted">{t('submitted')}</option>
-              <option value="verified">{t('verified')}</option>
               <option value="in_progress">{t('inProgress')}</option>
               <option value="resolved">{t('resolved')}</option>
               <option value="rejected">{t('rejected')}</option>
@@ -289,62 +252,75 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {filteredComplaints.length > 0 ? (
           <div className="space-y-4">
-            {filteredComplaints
-              .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-              .map((complaint) => (
-                <div
-                  key={complaint.id}
-                  className="bg-gray-50 rounded-lg p-4 border border-gray-200"
-                >
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    <div className="lg:col-span-2">
-                      <ComplaintCard
-                        complaint={complaint}
-                        language={language}
-                        onClick={() => onComplaintClick(complaint)}
-                      />
+            {filteredComplaints.map((complaint) => (
+              <div
+                key={complaint._id}
+                className="bg-gray-50 rounded-lg p-4 border border-gray-200"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <div className="lg:col-span-2">
+                    {/* Adapt backend complaint to frontend ComplaintCard format */}
+                    <ComplaintCard
+                      complaint={{
+                        id: complaint._id,
+                        userId: complaint.userId?._id || 'unknown',
+                        transcribedText: complaint.transcriptText,
+                        category: complaint.category,
+                        priority: complaint.priorityLabel === 'High' ? 'urgent' : complaint.priorityLabel === 'Medium' ? 'normal' : 'low',
+                        location: complaint.location,
+                        mediaFiles: [],
+                        status: complaint.status === 'Submitted' ? 'submitted' :
+                          complaint.status === 'InProgress' ? 'in_progress' :
+                            complaint.status === 'Completed' ? 'resolved' : 'rejected',
+                        createdAt: new Date(complaint.createdAt),
+                        updatedAt: new Date(complaint.updatedAt),
+                        verificationChain: []
+                      } as any}
+                      language={language}
+                      onClick={() => { }}
+                    />
+                  </div>
+
+                  <div className="flex flex-col space-y-2">
+                    <div className="text-sm font-medium text-gray-700 mb-2">
+                      Admin Actions
                     </div>
-                    
-                    <div className="flex flex-col space-y-2">
-                      <div className="text-sm font-medium text-gray-700 mb-2">
-                        Admin Actions
-                      </div>
-                      
-                      {complaint.status === 'submitted' && (
-                        <>
-                          <button
-                            onClick={() => handleAcceptComplaint(complaint)}
-                            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
-                          >
-                            ✓ Accept
-                          </button>
-                          <button
-                            onClick={() => handleRejectComplaint(complaint)}
-                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
-                          >
-                            ✗ Reject
-                          </button>
-                        </>
-                      )}
-                      
-                      {complaint.status === 'in_progress' && (
+
+                    {complaint.status === 'Submitted' && (
+                      <>
                         <button
-                          onClick={() => handleResolveComplaint(complaint)}
-                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                          onClick={() => handleUpdateStatus(complaint._id, 'InProgress')}
+                          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
                         >
-                          ✓ Mark Resolved
+                          ✓ Accept
                         </button>
-                      )}
-                      
-                      {(complaint.status === 'resolved' || complaint.status === 'rejected') && (
-                        <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm text-center">
-                          {complaint.status === 'resolved' ? '✓ Resolved' : '✗ Rejected'}
-                        </div>
-                      )}
-                    </div>
+                        <button
+                          onClick={() => handleUpdateStatus(complaint._id, 'Rejected')}
+                          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+                        >
+                          ✗ Reject
+                        </button>
+                      </>
+                    )}
+
+                    {complaint.status === 'InProgress' && (
+                      <button
+                        onClick={() => handleUpdateStatus(complaint._id, 'Completed')}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                      >
+                        ✓ Mark Resolved
+                      </button>
+                    )}
+
+                    {(complaint.status === 'Completed' || complaint.status === 'Rejected') && (
+                      <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm text-center">
+                        {complaint.status === 'Completed' ? '✓ Resolved' : '✗ Rejected'}
+                      </div>
+                    )}
                   </div>
                 </div>
-              ))}
+              </div>
+            ))}
           </div>
         ) : (
           <div className="text-center py-12">

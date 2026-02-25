@@ -1,37 +1,101 @@
-import React, { useState, useEffect } from 'react';
-import { MapPin, Camera, Send, AlertTriangle, Sparkles, Check } from 'lucide-react';
-import VoiceRecorder from './VoiceRecorder';
+import React, { useState, useEffect, useRef } from 'react';
+import { MapPin, Send, AlertTriangle, Sparkles, Mic, Square } from 'lucide-react';
 import { LocationService, LocationData } from '../utils/locationUtils';
-import { COMPLAINT_CATEGORIES, PRIORITY_LEVELS } from '../utils/constants';
-import { AISuggestion } from '../utils/aiCategorization';
-import { getTranslation } from '../utils/translations';
+import { useTranslation } from 'react-i18next';
+import api from '../api/axios';
 
 interface ComplaintFormProps {
-  language: string;
   onSubmit: (complaintData: any) => void;
-  isSubmitting?: boolean;
 }
 
 const ComplaintForm: React.FC<ComplaintFormProps> = ({
-  language,
-  onSubmit,
-  isSubmitting = false
+  onSubmit
 }) => {
-  const [voiceRecording, setVoiceRecording] = useState<{blob: Blob, url: string} | null>(null);
+  const { t, i18n } = useTranslation();
+
   const [transcribedText, setTranscribedText] = useState('');
-  const [category, setCategory] = useState('');
-  const [priority, setPriority] = useState<'urgent' | 'normal' | 'low'>('normal');
   const [location, setLocation] = useState<LocationData | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
-  const [images, setImages] = useState<File[]>([]);
-  const [aiSuggestion, setAiSuggestion] = useState<AISuggestion | null>(null);
-  const [showAiSuggestions, setShowAiSuggestions] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Voice Recognition states
+  const [isListening, setIsListening] = useState(false);
+  const [speechError, setSpeechError] = useState('');
+  const [speechSupported, setSpeechSupported] = useState(true);
+  const recognitionRef = useRef<any>(null);
+
+  // Classification Preview states
+  const [isClassifying, setIsClassifying] = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const previewTimerRef = useRef<number | null>(null);
 
   const locationService = new LocationService();
-  const categories = COMPLAINT_CATEGORIES[language as keyof typeof COMPLAINT_CATEGORIES] || COMPLAINT_CATEGORIES.english;
-  const priorities = PRIORITY_LEVELS[language as keyof typeof PRIORITY_LEVELS] || PRIORITY_LEVELS.english;
 
-  const t = (key: string) => getTranslation(language, key);
+  // Initialize Speech Recognition
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    const langCode = i18n.language === 'tamil' || i18n.language === 'ta' ? 'ta-IN' :
+      i18n.language === 'hindi' || i18n.language === 'hi' ? 'hi-IN' : 'en-US';
+    recognition.lang = langCode;
+
+    recognition.onresult = (event: any) => {
+      let currentTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          setTranscribedText(prev => prev ? prev + ' ' + transcript : transcript);
+        } else {
+          currentTranscript += transcript;
+        }
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error', event.error);
+      if (event.error !== 'no-speech') {
+        setSpeechError('Microphone error: ' + event.error);
+        setIsListening(false);
+      }
+    };
+
+    recognition.onend = () => {
+      // Auto-stopped due to silence or explicitly stopped
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, [i18n.language]);
+
+  const toggleListening = () => {
+    setSpeechError('');
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    } else {
+      try {
+        recognitionRef.current?.start();
+        setIsListening(true);
+      } catch (e) {
+        // Recognition might already be started implicitly
+        console.error(e);
+      }
+    }
+  };
 
   const getLocation = async () => {
     setLocationLoading(true);
@@ -46,46 +110,46 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
     }
   };
 
-  const handleVoiceRecording = (audioBlob: Blob, audioUrl: string, transcription?: string, suggestion?: AISuggestion) => {
-    setVoiceRecording({ blob: audioBlob, url: audioUrl });
-    
-    if (transcription) {
-      setTranscribedText(transcription);
-    }
-    
-    if (suggestion) {
-      setAiSuggestion(suggestion);
-      setShowAiSuggestions(true);
-    }
-  };
-
-  const acceptAiSuggestion = () => {
-    if (aiSuggestion) {
-      setCategory(aiSuggestion.category);
-      setPriority(aiSuggestion.priority);
-      setShowAiSuggestions(false);
-    }
-  };
-
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    setImages(prev => [...prev, ...files].slice(0, 3)); // Max 3 images
-  };
-
-  const removeImage = (index: number) => {
-    setImages(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!voiceRecording && !transcribedText) {
-      alert(t('recordVoiceOrText') || 'Please record a voice message or add text description.');
+  // Preview Auto-classification logic
+  const classifyText = async (text: string) => {
+    if (!text.trim()) {
+      setPreviewData(null);
       return;
     }
 
-    if (!category) {
-      alert(t('selectCategoryAlert') || 'Please select a category for your complaint.');
+    setIsClassifying(true);
+    try {
+      const dbLang = i18n.language === 'tamil' || i18n.language === 'ta' ? 'ta' : i18n.language === 'hindi' || i18n.language === 'hi' ? 'hi' : 'en';
+      const response = await api.post('/complaints/classify', { transcriptText: text, language: dbLang });
+      setPreviewData(response.data);
+    } catch (error) {
+      console.error('Classification preview error:', error);
+      setPreviewData(null);
+    } finally {
+      setIsClassifying(false);
+    }
+  };
+
+  useEffect(() => {
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current);
+    }
+    previewTimerRef.current = setTimeout(() => {
+      classifyText(transcribedText);
+    }, 1000); // Debounce interval
+
+    return () => {
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current);
+      }
+    };
+  }, [transcribedText]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!transcribedText.trim()) {
+      alert(t('recordVoiceOrText') || 'Please record a voice message or add text description.');
       return;
     }
 
@@ -94,167 +158,143 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
       return;
     }
 
-    const complaintData = {
-      voiceRecording: voiceRecording?.blob,
-      transcribedText,
-      category,
-      priority,
-      location,
-      images,
-      timestamp: new Date()
-    };
+    // Stop listening on submit
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
 
-    onSubmit(complaintData);
+    setIsSubmitting(true);
+    try {
+      const dbLang = i18n.language === 'tamil' || i18n.language === 'ta' ? 'ta' : i18n.language === 'hindi' || i18n.language === 'hi' ? 'hi' : 'en';
+      const response = await api.post('/complaints', {
+        transcriptText: transcribedText,
+        language: dbLang,
+        location: {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          address: location.address
+        }
+      });
+
+      // Pass the response to App to navigation to success
+      onSubmit(response.data);
+    } catch (err: any) {
+      console.error('Submission error:', err);
+      alert('Failed to submit complaint. ' + (err.response?.data?.message || err.message));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   useEffect(() => {
-    // Auto-get location when component mounts
     getLocation();
   }, []);
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl mx-auto">
       {/* Voice Recording Section */}
-      <div>
-        <VoiceRecorder
-          onRecordingComplete={handleVoiceRecording}
-          language={language}
-          isDisabled={isSubmitting}
-        />
-      </div>
+      <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-100 flex flex-col items-center">
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">Speak Your Complaint</h3>
 
-      {/* Transcribed Text Display */}
-      {transcribedText && !showAiSuggestions && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h4 className="font-medium text-blue-800 mb-2">Transcribed Text:</h4>
-          <p className="text-blue-700">{transcribedText}</p>
-        </div>
-      )}
-
-      {/* AI Suggestions */}
-      {showAiSuggestions && aiSuggestion && (
-        <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-4">
-          <div className="flex items-center space-x-2 mb-3">
-            <Sparkles size={20} className="text-purple-600" />
-            <h4 className="font-medium text-purple-800">{t('aiSuggestions')}</h4>
-            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
-              {Math.round(aiSuggestion.confidence)}% confidence
-            </span>
+        {!speechSupported ? (
+          <div className="text-red-500 text-sm mb-4 flex items-center">
+            <AlertTriangle size={16} className="mr-1" />
+            Voice input is not supported in this browser. Please type below.
           </div>
-          
-          <div className="space-y-3">
-            <div className="bg-white rounded-lg p-3 border border-purple-100">
-              <div className="text-sm text-gray-600 mb-1">{t('suggestedCategory')}</div>
-              <div className="font-medium text-gray-800">{aiSuggestion.category}</div>
+        ) : (
+          <>
+            <div className={`relative mb-6 ${isListening ? 'animate-pulse' : ''}`}>
+              <button
+                type="button"
+                onClick={toggleListening}
+                disabled={isSubmitting}
+                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 disabled:bg-gray-400 ${isListening
+                  ? 'bg-red-500 shadow-lg shadow-red-200 hover:bg-red-600'
+                  : 'bg-blue-600 shadow-lg shadow-blue-200 hover:bg-blue-700'
+                  }`}
+              >
+                {isListening ? (
+                  <Square size={28} className="text-white fill-current" />
+                ) : (
+                  <Mic size={32} className="text-white" />
+                )}
+              </button>
+
+              {isListening && (
+                <>
+                  <div className="absolute -inset-4 rounded-full border-4 border-red-300 animate-ping pointer-events-none"></div>
+                  <div className="absolute -inset-8 rounded-full border-2 border-red-200 animate-ping animation-delay-75 pointer-events-none"></div>
+                </>
+              )}
             </div>
-            
-            <div className="bg-white rounded-lg p-3 border border-purple-100">
-              <div className="text-sm text-gray-600 mb-1">{t('suggestedPriority')}</div>
-              <div className="font-medium text-gray-800">
-                {priorities[aiSuggestion.priority]}
-              </div>
+
+            <div className="text-center text-sm font-medium mb-4">
+              {isListening ? (
+                <span className="text-red-600">Listening... (Click to stop)</span>
+              ) : (
+                <span className="text-gray-600">{t('clickMicToSpeak')}</span>
+              )}
             </div>
-            
-            {aiSuggestion.keywords.length > 0 && (
-              <div className="bg-white rounded-lg p-3 border border-purple-100">
-                <div className="text-sm text-gray-600 mb-2">Detected Keywords:</div>
-                <div className="flex flex-wrap gap-1">
-                  {aiSuggestion.keywords.map((keyword, index) => (
-                    <span key={index} className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
-                      {keyword}
-                    </span>
-                  ))}
-                </div>
+
+            {speechError && (
+              <div className="text-red-500 text-sm mb-4">
+                {speechError}
               </div>
             )}
-            
-            <div className="flex space-x-3">
-              <button
-                type="button"
-                onClick={acceptAiSuggestion}
-                className="flex items-center space-x-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
-              >
-                <Check size={16} />
-                <span>{t('acceptSuggestion')}</span>
-              </button>
-              
-              <button
-                type="button"
-                onClick={() => setShowAiSuggestions(false)}
-                className="px-4 py-2 border border-gray-300 hover:border-gray-400 text-gray-700 rounded-lg text-sm font-medium transition-colors"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
       {/* Additional Text Input */}
-      <div>
+      <div className="bg-white rounded-xl p-6 shadow-md border border-gray-100">
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          {t('additionalDetails')}
+          {t('additionalDetails') || 'Complaint Description'}
         </label>
         <textarea
           value={transcribedText}
           onChange={(e) => setTranscribedText(e.target.value)}
-          placeholder={t('addDetails')}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-          rows={4}
+          placeholder={t('addDetails') || 'Speak into the microphone or type your complaint here...'}
+          className="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-gray-800 text-lg shadow-inner"
+          rows={5}
           disabled={isSubmitting}
         />
       </div>
 
-      {/* Category Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          {t('category')} *
-        </label>
-        <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          required
-          disabled={isSubmitting}
-        >
-          <option value="">{t('selectCategory')}</option>
-          {categories.map((cat, index) => (
-            <option key={index} value={cat}>{cat}</option>
-          ))}
-        </select>
-      </div>
+      {/* AI Preview Section */}
+      {(previewData || isClassifying) && transcribedText.trim() && (
+        <div className="bg-blue-50 rounded-xl p-6 shadow-sm border border-blue-100">
+          <h3 className="font-semibold text-blue-900 mb-4 flex items-center">
+            <Sparkles size={20} className="mr-2 text-blue-600" />
+            {t('aiPreview')}
+            {isClassifying && (
+              <div className="ml-3 w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            )}
+          </h3>
 
-      {/* Priority Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          {t('priority')}
-        </label>
-        <div className="grid grid-cols-3 gap-3">
-          {Object.entries(priorities).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setPriority(key as any)}
-              disabled={isSubmitting}
-              className={`p-3 rounded-lg border-2 text-sm font-medium transition-colors ${
-                priority === key
-                  ? key === 'urgent'
-                    ? 'border-red-500 bg-red-50 text-red-700'
-                    : key === 'normal'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-green-500 bg-green-50 text-green-700'
-                  : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-              }`}
-            >
-              {key === 'urgent' && <AlertTriangle size={16} className="mx-auto mb-1" />}
-              {label}
-            </button>
-          ))}
+          {previewData && !isClassifying ? (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm flex flex-col justify-center">
+                <div className="text-sm text-gray-500 mb-1">{t('detectedCategory')}</div>
+                <div className="font-bold text-gray-800 text-lg">{previewData.category}</div>
+              </div>
+              <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm flex flex-col justify-center">
+                <div className="text-sm text-gray-500 mb-1">{t('priorityValidation')}</div>
+                <div className={`font-bold text-lg ${previewData.priorityLabel === 'High' ? 'text-red-600' :
+                  previewData.priorityLabel === 'Medium' ? 'text-orange-500' : 'text-green-600'
+                  }`}>
+                  {previewData.priorityLabel} <span className="text-xs font-normal text-gray-500 ml-1">(Score: {(previewData.priorityScore * 100).toFixed(1)}%)</span>
+                </div>
+              </div>
+            </div>
+          ) : isClassifying ? (
+            <div className="text-gray-500 italic text-sm py-2">{t('analyzingSemantics')}</div>
+          ) : null}
         </div>
-      </div>
+      )}
 
       {/* Location Section */}
-      <div>
+      <div className="bg-white rounded-xl p-6 shadow-md border border-gray-100">
         <label className="block text-sm font-medium text-gray-700 mb-2">
           {t('location')} *
         </label>
@@ -263,7 +303,7 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
             type="button"
             onClick={getLocation}
             disabled={locationLoading || isSubmitting}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg transition-colors"
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg transition-colors shadow"
           >
             <MapPin size={16} />
             <span>
@@ -281,63 +321,33 @@ const ComplaintForm: React.FC<ComplaintFormProps> = ({
                 {location.address || `${location.latitude}, ${location.longitude}`}
               </p>
               <p className="text-xs text-green-500 mt-1">
-                Accuracy: {Math.round(location.accuracy)}m
+                {t('accuracy')}: {Math.round(location.accuracy)}m
               </p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Image Upload */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          {t('photos')}
-        </label>
-        <div className="space-y-3">
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handleImageUpload}
-            disabled={images.length >= 3 || isSubmitting}
-            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          />
-          
-          {images.length > 0 && (
-            <div className="grid grid-cols-3 gap-2">
-              {images.map((image, index) => (
-                <div key={index} className="relative">
-                  <img
-                    src={URL.createObjectURL(image)}
-                    alt={`Upload ${index + 1}`}
-                    className="w-full h-20 object-cover rounded-lg"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeImage(index)}
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full text-xs hover:bg-red-600"
-                    disabled={isSubmitting}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Submit Button */}
-      <button
-        type="submit"
-        disabled={isSubmitting || !location}
-        className="w-full flex items-center justify-center space-x-2 px-6 py-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors text-lg"
-      >
-        <Send size={20} />
-        <span>
-          {isSubmitting ? t('submittingComplaint') : t('submitComplaint')}
-        </span>
-      </button>
+      <div className="pt-2">
+        <button
+          type="submit"
+          disabled={isSubmitting || !location || !transcribedText.trim() || isClassifying}
+          className="w-full flex items-center justify-center space-x-2 px-6 py-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-xl font-bold transition-colors text-lg shadow-lg"
+        >
+          {isSubmitting ? (
+            <div className="flex items-center space-x-2">
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span>{t('submittingComplaint')}</span>
+            </div>
+          ) : (
+            <>
+              <Send size={22} className="mr-1" />
+              <span>{t('confirmSubmit')}</span>
+            </>
+          )}
+        </button>
+      </div>
     </form>
   );
 };
